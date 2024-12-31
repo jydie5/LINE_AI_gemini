@@ -2,12 +2,17 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from linebot import LineBotApi, WebhookParser
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import (
+    MessageEvent, TextMessage, FlexSendMessage,
+    TextSendMessage, BubbleContainer, BoxComponent,
+    TextComponent
+)
 import logging
 from google import genai
 import asyncio
 import json
-import os
+import markdown
+import re
 
 from .config import settings
 
@@ -92,6 +97,142 @@ async def get_gemini_response(question: str) -> str:
         logger.error(f"Gemini API error: {str(e)}")
         return "申し訳ありません。現在応答を生成できません。しばらく後でもう一度お試しください。"
 
+def convert_markdown_to_flex(md_text: str) -> FlexSendMessage:
+    try:
+        contents = []
+        
+        # テキストを行に分割
+        lines = md_text.split('\n')
+        current_text = []
+        
+        for line in lines:
+            # 見出し（**text**）の処理
+            if line.strip().startswith('**') and line.strip().endswith('**'):
+                # 前のテキストがあれば追加
+                if current_text:
+                    contents.append(
+                        TextComponent(
+                            text='\n'.join(current_text),
+                            wrap=True,
+                            size='md'
+                        )
+                    )
+                    current_text = []
+                
+                # 見出しを追加
+                heading_text = line.strip().strip('*')
+                if heading_text:  # 空でないことを確認
+                    contents.append(
+                        TextComponent(
+                            text=heading_text,
+                            weight='bold',
+                            size='lg',
+                            color='#1DB446'
+                        )
+                    )
+            
+            # コードブロックの処理
+            elif line.strip().startswith('```'):
+                # 前のテキストがあれば追加
+                if current_text:
+                    contents.append(
+                        TextComponent(
+                            text='\n'.join(current_text),
+                            wrap=True,
+                            size='md'
+                        )
+                    )
+                    current_text = []
+                
+                # コードブロックを収集
+                code_lines = []
+                i = lines.index(line) + 1
+                while i < len(lines) and not lines[i].strip().startswith('```'):
+                    code_lines.append(lines[i])
+                    i += 1
+                
+                if code_lines:  # 空でないことを確認
+                    contents.append(
+                        BoxComponent(
+                            layout='vertical',
+                            contents=[
+                                TextComponent(
+                                    text='\n'.join(code_lines),
+                                    wrap=True,
+                                    size='sm',
+                                    color='#333333'
+                                )
+                            ],
+                            backgroundColor='#f5f5f5',
+                            borderColor='#dddddd',
+                            borderWidth='1px',
+                            cornerRadius='4px',
+                            padding='md'
+                        )
+                    )
+            
+            # 箇条書きの処理
+            elif line.strip().startswith('*'):
+                bullet_text = line.strip().strip('* ')
+                if bullet_text:  # 空でないことを確認
+                    contents.append(
+                        BoxComponent(
+                            layout='horizontal',
+                            contents=[
+                                TextComponent(
+                                    text='•',
+                                    size='sm',
+                                    color='#666666',
+                                    flex=1
+                                ),
+                                TextComponent(
+                                    text=bullet_text,
+                                    wrap=True,
+                                    size='md',
+                                    flex=10
+                                )
+                            ]
+                        )
+                    )
+            
+            # 通常のテキスト
+            else:
+                if line.strip():
+                    current_text.append(line)
+        
+        # 残りのテキストがあれば追加
+        if current_text:
+            contents.append(
+                TextComponent(
+                    text='\n'.join(current_text),
+                    wrap=True,
+                    size='md'
+                )
+            )
+
+        # 空のコンテンツをフィルタリング
+        contents = [c for c in contents if c is not None]
+
+        if not contents:  # コンテンツが空の場合
+            return TextSendMessage(text=md_text)
+
+        bubble = BubbleContainer(
+            body=BoxComponent(
+                layout='vertical',
+                contents=contents,
+                padding='xl'
+            )
+        )
+
+        return FlexSendMessage(
+            alt_text="Geminiからの応答",
+            contents=bubble
+        )
+
+    except Exception as e:
+        logger.error(f"Error converting markdown to flex: {str(e)}", exc_info=True)
+        return TextSendMessage(text=md_text)
+
 async def handle_text_message(event: MessageEvent):
     try:
         question = event.message.text.strip()
@@ -101,10 +242,13 @@ async def handle_text_message(event: MessageEvent):
         # Geminiから応答を取得
         response = await get_gemini_response(question)
         
+        # マークダウンをFlexメッセージに変換
+        flex_message = convert_markdown_to_flex(response)
+        
         # LINE経由で応答を送信
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=response)
+            flex_message
         )
 
     except LineBotApiError as e:
