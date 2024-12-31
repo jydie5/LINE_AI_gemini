@@ -22,8 +22,6 @@ services:
       - "4040:4040"
     volumes:
       - ./.env:/app/.env
-    command: http --domain=alert-publicly-moose.ngrok-free.app api:8000 --log stdout
+    command: http --domain=your-domain-here.ngrok-free.app api:8000 --log stdout
     environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-
-
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN} 

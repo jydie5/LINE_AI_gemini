@@ -58,17 +58,127 @@ Google Gemini AIを利用したLINE Botです。Geminiの検索機能を活用�
 2. 環境変数を本番環境に設定
 3. Dockerコンテナをビルド・起動
 
+## API仕様
+
+### Webhook エンドポイント
+
+```
+POST /callback
+```
+
+### リクエスト例（LINEからのWebhook）
+
+```json
+{
+  "destination": "xxxxxxxxxx",
+  "events": [
+    {
+      "type": "message",
+      "message": {
+        "type": "text",
+        "id": "xxxxx",
+        "text": "fizzbuzzのpython"
+      },
+      "timestamp": 1703999771818,
+      "source": {
+        "type": "user",
+        "userId": "xxxxx"
+      },
+      "replyToken": "xxxxx",
+      "mode": "active"
+    }
+  ]
+}
+```
+
+### Gemini APIレスポンス構造
+
+```json
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "はい、FizzBuzzをPythonで実装する方法ですね。..."
+          },
+          {
+            "text": "```python\ndef fizzbuzz(n):\n    for i in range(1, n + 1):\n        ..."
+          }
+        ],
+        "role": "model"
+      },
+      "grounding_metadata": {
+        "web_search_queries": [
+          "fizzbuzz explanation",
+          "what is fizzbuzz"
+        ]
+      }
+    }
+  ]
+}
+```
+
+### LINE応答メッセージ構造（Flex Message）
+
+```json
+{
+  "type": "flex",
+  "altText": "Geminiからの応答",
+  "contents": {
+    "type": "bubble",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "text",
+          "text": "説明テキスト",
+          "wrap": true,
+          "size": "md"
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "backgroundColor": "#f5f5f5",
+          "contents": [
+            {
+              "type": "text",
+              "text": "コードブロック",
+              "wrap": true,
+              "size": "sm",
+              "color": "#333333"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### データフロー
+
+1. LINEからのWebhookを受信
+2. メッセージテキストを抽出しGemini APIに送信
+3. Geminiからの応答をパース
+4. マークダウン形式のテキストをFlex Messageに変換
+5. LINEへ応答を送信
+
 ## ディレクトリ構造
 ```
 /
 ├── app/
-│ ├── init.py
+│ ├── __init__.py
 │ ├── main.py
 │ └── config.py
 ├── docker-compose.yml
+├── docker-compose.example.yml
 ├── Dockerfile
 ├── requirements.txt
 ├── .env
+├── .env.example
+├── .gitignore
 └── readme.md
 ```
 
@@ -100,3 +210,46 @@ jydie5
 - LINE Messaging API
 - FastAPI
 - その他、利用しているオープンソースプロジェクト
+
+## 設定ファイル
+
+### .env.example
+
+```
+DEBUG=true
+LINE_CHANNEL_SECRET=your_line_channel_secret_here
+LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token_here
+GOOGLE_API_KEY=your_google_api_key_here
+NGROK_AUTHTOKEN=your_ngrok_auth_token_here
+```
+
+### docker-compose.example.yml
+
+```yaml
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./.env:/app/.env
+    environment:
+      - DEBUG=true
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    depends_on:
+      - api
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./.env:/app/.env
+    command: http --domain=your-domain-here.ngrok-free.app api:8000 --log stdout
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+```
