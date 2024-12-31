@@ -1,0 +1,6 @@
+fastapi
+python-dotenv
+line-bot-sdk
+google-genai
+uvicorn
+pydantic-settings
